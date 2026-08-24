@@ -220,6 +220,14 @@ class SyncClaudeMemoryTest(unittest.TestCase):
             "# Handwritten Codex Notes\n",
         )
 
+    def test_rejects_unsafe_ssh_endpoint(self) -> None:
+        result = self.run_script(
+            "--target-ssh", "werner@host;touch-pwned", "--dry-run"
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SSH endpoint must use USER@HOST", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

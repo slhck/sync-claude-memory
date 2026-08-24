@@ -5,9 +5,10 @@ This standalone Python tool syncs project memory between Claude Code and Codex C
 ## Requirements
 
 - `uv`
-- Python 3.13 or newer, installed automatically by `uv` when needed
+- Python 3.11 or newer, installed automatically by `uv` when needed
 - Claude Code project data under `~/.claude/projects`
 - A Codex CLI version with native memories enabled
+- `ssh` and `scp` for remote transfers
 
 The script has no third-party Python dependencies.
 
@@ -69,6 +70,46 @@ Codex may contain scoped memory for a project that Claude has never opened. Use 
 
 Use `--delete` to remove stale files owned by the selected sync direction. Use `--verbose` to print every file operation. Alternate data directories can be supplied with `--claude-home` and `--codex-home`.
 
+## Remote sync
+
+Use `--source-ssh` when the source memory is on another machine. The destination remains local.
+
+Copy Claude memory from an old machine into local Codex:
+
+```console
+./sync_claude_memory.py --source-ssh user@old-host
+```
+
+Copy Codex memory from another machine into local Claude:
+
+```console
+./sync_claude_memory.py \
+  --direction codex-to-claude \
+  --source-ssh user@old-host
+```
+
+Use `--target-ssh` when the source memory is local and the destination is on another machine.
+
+Copy local Claude memory into Codex on a new machine:
+
+```console
+./sync_claude_memory.py --target-ssh user@new-host
+```
+
+Copy local Codex memory into Claude on a new machine:
+
+```console
+./sync_claude_memory.py \
+  --direction codex-to-claude \
+  --target-ssh user@new-host
+```
+
+Add `--ssh-port PORT` for a non-default SSH port. Remote sync uses non-interactive SSH authentication, so key-based login must already work. When the tool executes remotely, it uses `uv` if available and otherwise falls back to Python 3.11 or newer.
+
+The tool uploads itself and a minimal source snapshot to a randomly named directory under remote `/tmp`. It removes that staging directory after the run. Remote source mode reads the source stores and writes only to temporary staging. Remote target mode writes to the selected remote memory store.
+
+Project `cwd` scopes are preserved exactly. Remote transfer therefore assumes that project checkouts use the same absolute paths on both machines. A memory entry remains available under its original scope when the path does not exist on the destination, but Codex or Claude may not associate it with a differently located checkout.
+
 ## How discovery works
 
 Claude stores memory files under `~/.claude/projects/<project-key>/memory/`. The tool resolves each key back to its working directory from the durable per-project `sessions-index.json`. It also checks `~/.claude/sessions`, Claude history and configuration, and local transcript metadata as fallbacks.
@@ -113,7 +154,8 @@ The reverse manifest `~/.claude/.sync-codex-memory.json` records generated proje
 - The external-agent import layout is an internal Codex format verified with Codex CLI 0.149.1. A later Codex release may change it.
 - A Claude project is skipped when its working directory cannot be recovered. Codex needs this path to keep imported memory scoped to the correct project.
 - Reverse sync exports only consolidated task groups with an explicit project path. It does not export global profile data, unscoped memory, raw rollout summaries, or pending extension resources.
-- The script copies memory locally and does not make network requests. Codex may send imported content to its configured model provider when it consolidates or uses that memory.
+- Remote sync transfers memory through SSH/SCP and temporarily stores the transferred subset under `/tmp`. It does not support password prompts or interactive SSH challenges.
+- Apart from requested SSH/SCP transfers, the script does not contact network services. Codex may send imported content to its configured model provider when it consolidates or uses that memory.
 
 Run with `--dry-run` before the first sync to review the destination paths and the number of files that would be copied.
 
