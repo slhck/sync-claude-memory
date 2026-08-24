@@ -57,6 +57,22 @@ class SyncClaudeMemoryTest(unittest.TestCase):
             / relative
         )
 
+    def claude_memory(self, key: str, relative: str) -> Path:
+        return self.claude_home / "projects" / key / "memory" / relative
+
+    def create_codex_registry(self, cwd: str) -> None:
+        registry = self.codex_home / "memories/MEMORY.md"
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(
+            "# Task Group: Example workflow\n\n"
+            "scope: Remember the example workflow.\n"
+            f"applies_to: cwd={cwd}; reuse_rule=Use it in this checkout.\n\n"
+            "## Reusable knowledge\n\n"
+            "- Run `example --check` before publishing.\n\n"
+            "# Task Group: Global memory\n\n"
+            "scope: This block has no project path.\n"
+        )
+
     def test_syncs_memory_and_scope(self) -> None:
         cwd = "/work/example.project"
         key = self.create_project(
@@ -131,6 +147,78 @@ class SyncClaudeMemoryTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("cannot determine cwd", result.stderr)
         self.assertTrue(self.resource(key, "MEMORY.md").exists())
+
+    def test_reverse_sync_exports_scoped_codex_memory(self) -> None:
+        cwd = "/work/example"
+        key = self.create_project(cwd, {"MEMORY.md": "# Existing Memory\n"})
+        self.create_codex_registry(cwd)
+
+        result = self.run_script("--direction", "codex-to-claude")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        generated = self.claude_memory(key, "codex-memory.md").read_text()
+        self.assertTrue(generated.startswith("# Codex Memory\n"))
+        self.assertIn("## Task Group: Example workflow", generated)
+        self.assertNotIn("Global memory", generated)
+        index = self.claude_memory(key, "MEMORY.md").read_text()
+        self.assertIn("[Codex memory](codex-memory.md)", index)
+
+    def test_forward_sync_does_not_echo_reverse_sync_content(self) -> None:
+        cwd = "/work/example"
+        key = self.create_project(cwd, {"MEMORY.md": "# Existing Memory\n"})
+        self.create_codex_registry(cwd)
+        self.assertEqual(
+            self.run_script("--direction", "codex-to-claude").returncode, 0
+        )
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        imported_index = self.resource(key, "MEMORY.md").read_text()
+        self.assertEqual(imported_index, "# Existing Memory\n")
+        imported_generated = (
+            self.codex_home
+            / "memories/extensions/external_agent_import/resources"
+            / key
+            / "codex-memory.md"
+        )
+        self.assertFalse(imported_generated.exists())
+
+    def test_reverse_delete_removes_only_generated_memory(self) -> None:
+        cwd = "/work/example"
+        key = self.create_project(cwd, {"MEMORY.md": "# Existing Memory\n"})
+        self.create_codex_registry(cwd)
+        self.assertEqual(
+            self.run_script("--direction", "codex-to-claude").returncode, 0
+        )
+        self.create_codex_registry("/work/other")
+
+        result = self.run_script("--direction", "codex-to-claude", "--delete")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.claude_memory(key, "codex-memory.md").exists())
+        index = self.claude_memory(key, "MEMORY.md").read_text()
+        self.assertEqual(index, "# Existing Memory\n")
+
+    def test_reverse_sync_refuses_non_owned_target(self) -> None:
+        cwd = "/work/example"
+        key = self.create_project(
+            cwd,
+            {
+                "MEMORY.md": "# Existing Memory\n",
+                "codex-memory.md": "# Handwritten Codex Notes\n",
+            },
+        )
+        self.create_codex_registry(cwd)
+
+        result = self.run_script("--direction", "codex-to-claude")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to overwrite non-tool-owned", result.stderr)
+        self.assertEqual(
+            self.claude_memory(key, "codex-memory.md").read_text(),
+            "# Handwritten Codex Notes\n",
+        )
 
 
 if __name__ == "__main__":
