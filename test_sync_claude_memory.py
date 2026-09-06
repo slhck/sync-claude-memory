@@ -1,9 +1,15 @@
+import argparse
+import contextlib
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import sync_claude_memory as sync
 
 
 SCRIPT = Path(__file__).with_name("sync_claude_memory.py")
@@ -227,6 +233,49 @@ class SyncClaudeMemoryTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SSH endpoint must use USER@HOST", result.stderr)
+
+    def test_remote_source_without_project_memory_is_a_noop(self) -> None:
+        args = argparse.Namespace(
+            claude_home=self.claude_home,
+            codex_home=self.codex_home,
+            create_projects=False,
+            delete=False,
+            direction="claude-to-codex",
+            dry_run=False,
+            project=[],
+            ssh_port=22,
+            verbose=False,
+        )
+
+        def copy_empty_extension(
+            endpoint: str, port: int, source: str, destination: Path
+        ) -> None:
+            destination.mkdir()
+            (destination / "instructions.md").write_text("instructions\n")
+            (destination / ".sync-claude-memory.json").write_text("{}\n")
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(sync, "remote_home", return_value=Path("/home/werner")),
+            mock.patch.object(
+                sync, "create_remote_temp", return_value="/tmp/sync-claude-memory.abc123"
+            ),
+            mock.patch.object(sync, "remote_runner", return_value="python3"),
+            mock.patch.object(sync, "copy_to_remote"),
+            mock.patch.object(
+                sync,
+                "remote_command",
+                return_value=subprocess.CompletedProcess([], 0, "Synced 0 project(s).\n", ""),
+            ),
+            mock.patch.object(sync, "copy_from_remote", side_effect=copy_empty_extension),
+            mock.patch.object(sync, "remove_remote_temp"),
+            contextlib.redirect_stdout(output),
+        ):
+            result = sync.run_remote_source(args, "werner@cassandra")
+
+        self.assertEqual(result, 0)
+        self.assertIn("No Claude project memories found on werner@cassandra.", output.getvalue())
+        self.assertFalse(self.codex_home.exists())
 
 
 if __name__ == "__main__":

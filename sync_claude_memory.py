@@ -968,6 +968,10 @@ def run_remote_source(args: argparse.Namespace, endpoint: str) -> int:
         finally:
             remove_remote_temp(endpoint, args.ssh_port, remote_temp)
 
+        if not (pulled / "resources").is_dir():
+            print(f"No Claude project memories found on {endpoint}.")
+            return 0
+
         staged_claude = staging / "claude"
         create_synthetic_claude_from_extension(pulled, staged_claude)
         return run_to_codex(staged_args(args, staged_claude, local_codex))
