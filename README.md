@@ -70,6 +70,29 @@ Codex may contain scoped memory for a project that Claude has never opened. Use 
 
 Use `--delete` to remove stale files owned by the selected sync direction. Use `--verbose` to print every file operation. Alternate data directories can be supplied with `--claude-home` and `--codex-home`.
 
+## Two-way sync with another machine
+
+Sync Claude memory into Codex and Codex memory into Claude on both machines:
+
+```console
+./sync_two_way.py my-host
+```
+
+Preview first with `./sync_two_way.py my-host --dry-run`. Pass an SSH alias or
+`USER@HOST` as the required host argument. Add `--ssh-port PORT` when needed.
+
+The command maps project scopes between the local and remote home directories
+(for example, `/Users/werner` and `/home/werner`). Paths within the exported
+memory text retain their original provenance. Both machines must have their
+Claude project store and consolidated Codex `memories/MEMORY.md` available.
+
+Each run performs four managed exports and creates missing Claude project
+directories. It makes no backups and deletes no files. It stops if any transfer
+fails; earlier successful transfers remain applied. Generated Codex exports are
+excluded from Claude imports to prevent feedback loops. Each destination's
+managed export is refreshed from its source; handwritten Claude memory remains
+in place. Codex consolidates imported Claude resources on a later memory run.
+
 ## Remote sync
 
 Use `--source-ssh` when the source memory is on another machine. The destination remains local.
@@ -108,7 +131,12 @@ Add `--ssh-port PORT` for a non-default SSH port. Remote sync uses non-interacti
 
 The tool uploads itself and a minimal source snapshot to a randomly named directory under remote `/tmp`. It removes that staging directory after the run. Remote source mode reads the source stores and writes only to temporary staging. Remote target mode writes to the selected remote memory store.
 
-Project `cwd` scopes are preserved exactly. Remote transfer therefore assumes that project checkouts use the same absolute paths on both machines. A memory entry remains available under its original scope when the path does not exist on the destination, but Codex or Claude may not associate it with a differently located checkout.
+Project `cwd` scopes are preserved by default. For different checkout locations,
+add `--path-map /source/prefix=/destination/prefix`. Repeat the option for
+multiple prefixes; the longest matching prefix wins. Mapping changes exported
+project scopes and destination project keys, while preserving source memory and
+historical paths in the text. The two-way command sets the home mapping
+automatically. Checkouts outside that mapping retain their original scope.
 
 ## How discovery works
 

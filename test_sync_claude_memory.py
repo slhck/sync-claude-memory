@@ -11,7 +11,6 @@ from unittest import mock
 
 import sync_claude_memory as sync
 
-
 SCRIPT = Path(__file__).with_name("sync_claude_memory.py")
 
 
@@ -225,6 +224,88 @@ class SyncClaudeMemoryTest(unittest.TestCase):
             self.claude_memory(key, "codex-memory.md").read_text(),
             "# Handwritten Codex Notes\n",
         )
+
+    def test_reverse_only_project_is_not_imported_back(self) -> None:
+        self.create_project("/work/native", {"MEMORY.md": "Native notes\n"})
+        self.create_codex_registry("/work/codex-only")
+        result = self.run_script("--direction", "codex-to-claude", "--create-projects")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Synced 1 project(s)", result.stdout)
+        self.assertNotIn("cannot determine cwd", result.stderr)
+
+    def test_forward_maps_scope_and_key_without_changing_source(self) -> None:
+        source = "/Users/example/work/project"
+        key = self.create_project(source, {"MEMORY.md": source + "\n"})
+        result = self.run_script("--path-map", "/Users/example=/home/example")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        mapped_key = sync.claude_project_key(Path("/home/example/work/project"))
+        self.assertEqual(
+            json.loads(self.resource(mapped_key, "scope.json").read_text()),
+            {"cwd": "/home/example/work/project"},
+        )
+        self.assertEqual(
+            self.resource(mapped_key, "MEMORY.md").read_text(), source + "\n"
+        )
+        self.assertTrue(self.claude_memory(key, "MEMORY.md").exists())
+
+    def test_reverse_maps_scope_but_preserves_historical_paths(self) -> None:
+        self.create_codex_registry("/Users/example/work/project")
+        registry = self.codex_home / "memories/MEMORY.md"
+        registry.write_text(
+            registry.read_text() + "\nHistorical: /Users/example/file\n"
+        )
+        result = self.run_script(
+            "--direction",
+            "codex-to-claude",
+            "--create-projects",
+            "--path-map",
+            "/Users/example=/home/example",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        key = sync.claude_project_key(Path("/home/example/work/project"))
+        content = self.claude_memory(key, "codex-memory.md").read_text()
+        self.assertIn("Project scope: `/home/example/work/project`", content)
+        self.assertIn("applies_to: cwd=/home/example/work/project;", content)
+        self.assertIn(
+            "applies_to: cwd=/Users/example/work/project;", registry.read_text()
+        )
+
+    def test_mapping_respects_boundaries_and_longest_prefix(self) -> None:
+        mappings = [
+            sync.parse_path_map(value)
+            for value in ("/Users/a=/home/a", "/Users/a/work=/srv/work")
+        ]
+        self.assertEqual(
+            sync.mapped_path(Path("/Users/a/work/repo"), mappings),
+            Path("/srv/work/repo"),
+        )
+        self.assertEqual(
+            sync.mapped_path(Path("/Users/anna/repo"), mappings),
+            Path("/Users/anna/repo"),
+        )
+        with self.assertRaises(argparse.ArgumentTypeError):
+            sync.parse_path_map("relative=/absolute")
+
+    def test_mapping_is_forwarded_only_to_remote_destination(self) -> None:
+        args = argparse.Namespace(
+            direction="claude-to-codex",
+            project=[],
+            delete=False,
+            create_projects=False,
+            dry_run=True,
+            verbose=False,
+            path_map=[(Path("/Users/a"), Path("/home/a"))],
+        )
+        command = sync.remote_script_arguments(
+            args, "python3", "script", "claude", "codex"
+        )
+        self.assertIn("/Users/a=/home/a", command)
+        extraction = sync.remote_script_arguments(
+            args, "python3", "script", "claude", "codex", extraction=True
+        )
+        self.assertNotIn("--path-map", extraction)
 
     def test_rejects_unsafe_ssh_endpoint(self) -> None:
         result = self.run_script(
